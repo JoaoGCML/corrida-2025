@@ -1,0 +1,961 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Corrida de 2025 → Dragão 2026</title>
+  <style>
+    :root { color-scheme: dark; }
+    body{
+      margin:0; background:#050817; color:#e5e7eb;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      display:flex; align-items:center; justify-content:center; min-height:100vh;
+    }
+    .wrap{ width:min(980px, 100vw); padding:10px; }
+    header{ display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+    h1{ margin:0; font-size:18px; font-weight:800; letter-spacing:.2px; }
+    .hint{ margin:0; opacity:.85; font-size:13px; }
+    .panel{
+      display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+      background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12);
+      padding:10px 12px; border-radius:14px;
+    }
+    .stat{ font-size:12px; opacity:.95; }
+    .stat b{ font-size:13px; }
+    canvas{
+      width:100%; height:auto; display:block; margin-top:10px;
+      background: linear-gradient(#0b1230, #040614 55%, #02030c);
+      border-radius:18px;
+      border:1px solid rgba(255,255,255,.12);
+      box-shadow: 0 20px 60px rgba(0,0,0,.5);
+      touch-action: manipulation;
+    }
+    .controls{
+      margin-top:10px;
+      display:grid; grid-template-columns: 1fr; gap:10px;
+    }
+    .btnrow{ display:flex; gap:10px; flex-wrap:wrap; justify-content:space-between; }
+    button{
+      appearance:none; border:none; cursor:pointer;
+      background: rgba(255,255,255,.10);
+      color:#e5e7eb;
+      border:1px solid rgba(255,255,255,.16);
+      padding:10px 12px; border-radius:12px;
+      font-weight:700;
+    }
+    button:active{ transform: translateY(1px); }
+    .footer{ opacity:.7; font-size:12px; margin-top:6px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Corrida de 2025 — salte os meses para o ano novo!</h1>
+      <p class="hint">Desktop: <b>ESPAÇO</b>/<b>↑</b> para pular, <b>P</b> pausa, <b>R</b> reinicia. Mobile: toque para pular.</p>
+    </div>
+    <div class="panel" id="hud">
+      <div class="stat">Mês: <b id="hudMonth">Jan 2025</b></div>
+      <div class="stat">Nível: <b id="hudLevel">1</b></div>
+      <div class="stat">Score: <b id="hudScore">0</b></div>
+      <div class="stat">Combo: <b id="hudCombo">x1</b></div>
+      <div class="stat">Recorde: <b id="hudBest">0</b></div>
+    </div>
+  </header>
+
+  <canvas id="c" width="980" height="460" aria-label="Jogo Corrida de 2025"></canvas>
+
+  <div class="controls">
+    <div class="btnrow">
+      <button id="btnJump">Pular</button>
+      <button id="btnPause">Pausar/Retomar (P)</button>
+      <button id="btnRestart">Reiniciar (R)</button>
+      <button id="btnSound">Som: Ligado</button>
+      <button id="btnMode">Modo: Normal</button>
+    </div>
+    <div class="footer">
+      Dica: passar muito perto do obstáculo dá <b>bonus</b> (quase colisão) e aumenta o combo.
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ---------- CANVAS / SCALE ----------
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+
+  // ---------- HUD ----------
+  const hudMonth = document.getElementById('hudMonth');
+  const hudLevel = document.getElementById('hudLevel');
+  const hudScore = document.getElementById('hudScore');
+  const hudCombo = document.getElementById('hudCombo');
+  const hudBest = document.getElementById('hudBest');
+
+  // ---------- GAME STATE ----------
+  const W = canvas.width, H = canvas.height;
+  const groundY = Math.floor(H * 0.78);
+  const laneY = groundY;
+  let gravity = 0.55;
+
+  const months = [
+    { key:'Jan', title:'Janeiro',  story:'Começo veloz: planos, promessas e o primeiro salto de coragem.' },
+    { key:'Fev', title:'Fevereiro', story:'Ritmo curto: decisões rápidas antes do tempo escorrer.' },
+    { key:'Mar', title:'Março',    story:'Turbulência: o mar muda e os desafios ganham dentes.' },
+    { key:'Abr', title:'Abril',    story:'Reviravolta: um susto estilizado te testa sem avisar.' },
+    { key:'Mai', title:'Maio',     story:'Fôlego: o meio do caminho pede constância e cabeça fria.' },
+    { key:'Jun', title:'Junho',    story:'Faíscas: passos firmes entre estalos e bombas de tensão.' },
+    { key:'Jul', title:'Julho',    story:'Travessia: a água baixa revela jacarés na margem.' },
+    { key:'Ago', title:'Agosto',   story:'Acelera: decisões grandes, chão que treme, foco total.' },
+    { key:'Set', title:'Setembro', story:'Virada: a reta parece longa, mas o controle é seu.' },
+    { key:'Out', title:'Outubro',  story:'Assombro divertido: perigo com cara de desenho, mas real.' },
+    { key:'Nov', title:'Novembro', story:'Finalização: quem chegou até aqui já aprendeu o timing.' },
+    { key:'Dez', title:'Dezembro', story:'Fecho: últimas ondas. O dragão já está te esperando.' }
+  ];
+
+  const obstacleKinds = ['shark','bomb','gator'];
+
+  const player = {
+    x: Math.floor(W*0.15),
+    y: laneY,
+    w: 34,
+    h: 52,
+    vy: 0,
+    onGround: true,
+    blinkT: 0, // hit flash
+    dustT: 0,
+  };
+
+  let state = {
+    started: false,
+    paused: false,
+    over: false,
+    win: false,
+    t: 0,
+    speed: 4.2,
+    baseSpeed: 4.2,
+    level: 1,
+    monthIndex: 0,
+    score: 0,
+    combo: 1,
+    best: Number(localStorage.getItem('best_corrida_2025') || '0'),
+    soundOn: true,
+    tipText: '',
+    tipTimer: 0,
+    nearMissCooldown: 0,
+    finishX: 0,
+    dragonWave: 0,
+  };
+  // ---------- MODE (EASY/NORMAL/HARD) ----------
+  let mode = 'NORMAL';
+  let jumpVel = -14.5;
+
+  function applyMode() {
+    if (mode === 'EASY') {
+      gravity = 0.48;
+      state.baseSpeed = 3.0;   // slower
+      jumpVel = -15.5;         // higher jump
+    } else if (mode === 'NORMAL') {
+      gravity = 0.55;
+      state.baseSpeed = 3.6;   // medium
+      jumpVel = -14.5;
+    } else {
+      gravity = 0.78;
+      state.baseSpeed = 4.6;   // faster
+      jumpVel = -12.8;         // lower jump
+    }
+  }
+
+  applyMode();
+
+
+  hudBest.textContent = String(state.best);
+
+  // ---------- AUDIO (WebAudio) ----------
+  let audioCtx = null;
+  const ensureAudio = () => {
+    if (!state.soundOn) return;
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  };
+
+  function beep(type='square', freq=440, dur=0.08, gain=0.05) {
+    if (!state.soundOn) return;
+    ensureAudio();
+    if (!audioCtx) return;
+
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = type;
+    o.frequency.value = freq;
+    g.gain.value = gain;
+
+    o.connect(g);
+    g.connect(audioCtx.destination);
+    const now = audioCtx.currentTime;
+    g.gain.setValueAtTime(gain, now);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+    o.start(now);
+    o.stop(now + dur);
+  }
+
+  function sfxJump(){ beep('square', 520, 0.07, 0.06); beep('sine', 780, 0.05, 0.04); }
+  function sfxNear(){ beep('sawtooth', 260, 0.09, 0.05); }
+  function sfxHit(){ beep('triangle', 120, 0.18, 0.08); beep('square', 80, 0.22, 0.06); }
+  function sfxWin(){ beep('sine', 660, 0.12, 0.06); setTimeout(()=>beep('sine', 880, 0.12, 0.06), 120); setTimeout(()=>beep('sine', 990, 0.16, 0.06), 240); }
+
+  // ---------- OBSTACLES ----------
+  const obstacles = [];
+  function buildObstacles() {
+    obstacles.length = 0;
+    // Espaçamento que diminui um pouco ao longo do ano
+    let x = Math.floor(W * 0.62);
+    for (let i=0; i<months.length; i++) {
+      const kind = obstacleKinds[i % obstacleKinds.length];
+      const w = 60;
+      const h = 46 + (i%3)*6;
+      const bobAmp = 8 + (i%4)*2; // movimento vertical “ameaçador”
+      const bobSpeed = 0.04 + i*0.001;
+      obstacles.push({
+        id: i,
+        monthIndex: i,
+        kind,
+        x,
+        y: laneY,
+        w,
+        h,
+        bobAmp,
+        bobSpeed,
+        phase: i*1.7,
+        passed: false,
+        nearMissed: false,
+      });
+      x += 300 - i*6; // mais apertado no fim
+    }
+
+    // Linha de chegada: dragão + placa 2026
+    state.finishX = x + 160;
+  }
+
+  buildObstacles();
+
+  // ---------- INPUT ----------
+  function jump() {
+    if (state.over || state.win) return;
+    if (!state.started) state.started = true;
+    if (state.paused) return;
+    if (player.onGround) {
+      player.vy = jumpVel;
+      player.onGround = false;
+      player.dustT = 10;
+      sfxJump();
+    }
+  }
+
+  function togglePause() {
+    if (state.over || state.win) return;
+    if (!state.started) state.started = true;
+    state.paused = !state.paused;
+    if (state.paused) state.tipText = 'PAUSADO — pressione P para retomar';
+    else state.tipText = '';
+    state.tipTimer = state.paused ? 999999 : 0;
+  }
+
+  function restart(modeOverride) {
+    if (modeOverride) mode = modeOverride;
+    applyMode();
+    const btnMode = document.getElementById('btnMode');
+    if (btnMode) btnMode.textContent = `Modo: ${mode === 'EASY' ? 'Fácil' : (mode === 'NORMAL' ? 'Normal' : 'Hard')}`;
+    state = {
+      ...state,
+      started:false, paused:false, over:false, win:false,
+      t:0, speed: state.baseSpeed, level:1, monthIndex:0,
+      score:0, combo:1,
+      tipText:'', tipTimer:0, nearMissCooldown:0,
+      dragonWave:0,
+    };
+    player.y = laneY; player.vy = 0; player.onGround = true; player.blinkT=0; player.dustT=0;
+    buildObstacles();
+    // mostra instruções do modo
+    state.tipText = (mode === 'EASY')
+      ? 'Modo FÁCIL — bem tranquilo. Toque/ESPAÇO para começar'
+      : (mode === 'NORMAL')
+        ? 'Modo NORMAL — equilibrado. Toque/ESPAÇO para começar'
+        : 'Modo HARD — sem dó. Toque/ESPAÇO para começar';
+    state.tipTimer = 170;
+    updateHUD();
+    renderIdle();
+  }
+
+  // Keyboard
+  window.addEventListener('keydown', (e) => {
+    const code = e.code;
+    if (code === 'Space' || code === 'ArrowUp') { e.preventDefault(); jump(); }
+    else if (code === 'KeyP') togglePause();
+    else if (code === 'KeyR') restart();
+    else if (code === 'KeyM') {
+      mode = (mode === 'EASY') ? 'NORMAL' : (mode === 'NORMAL' ? 'HARD' : 'EASY');
+      applyMode();
+      const btnMode = document.getElementById('btnMode');
+      if (btnMode) btnMode.textContent = `Modo: ${mode === 'EASY' ? 'Fácil' : (mode === 'NORMAL' ? 'Normal' : 'Hard')}`;
+      restart();
+    }
+    else if (code === 'KeyE') { mode = 'EASY'; applyMode(); restart(); }
+    else if (code === 'KeyH') { mode = 'HARD'; applyMode(); restart(); }
+    else if (code === 'KeyN') { mode = 'NORMAL'; applyMode(); restart(); }
+  }, { passive:false });
+
+  // Mouse/touch on canvas
+  canvas.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    jump();
+  }, { passive:false });
+
+  // Buttons
+  document.getElementById('btnJump').addEventListener('click', jump);
+  document.getElementById('btnPause').addEventListener('click', togglePause);
+  document.getElementById('btnRestart').addEventListener('click', restart);
+  document.getElementById('btnMode').addEventListener('click', () => {
+    mode = (mode === 'EASY') ? 'NORMAL' : (mode === 'NORMAL' ? 'HARD' : 'EASY');
+    applyMode();
+    document.getElementById('btnMode').textContent = `Modo: ${mode === 'EASY' ? 'Fácil' : (mode === 'NORMAL' ? 'Normal' : 'Hard')}`;
+  });
+  document.getElementById('btnSound').addEventListener('click', (e) => {
+    state.soundOn = !state.soundOn;
+    e.target.textContent = state.soundOn ? 'Som: Ligado' : 'Som: Desligado';
+    if (state.soundOn) ensureAudio();
+  });
+
+  // ---------- HELPERS ----------
+  function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+
+  function aabb(ax, ay, aw, ah, bx, by, bw, bh) {
+    return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+  }
+
+  function showTip(text, frames=170) {
+    state.tipText = text;
+    state.tipTimer = frames;
+  }
+
+  function updateHUD() {
+    const m = months[clamp(state.monthIndex, 0, months.length-1)];
+    hudMonth.textContent = `${m.key} 2025`;
+    hudLevel.textContent = String(state.level);
+    hudScore.textContent = String(Math.floor(state.score));
+    hudCombo.textContent = `x${state.combo}`;
+    hudBest.textContent = String(state.best);
+  }
+
+  // ---------- DRAW: BACKGROUND ----------
+  function drawBackground() {
+    // Stars
+    ctx.save();
+    ctx.globalAlpha = 0.25;
+    for (let i=0; i<60; i++) {
+      const x = (i*173 + Math.floor(state.t*0.3)) % W;
+      const y = (i*97) % Math.floor(H*0.55);
+      ctx.fillRect(W - x, y, 2, 2);
+    }
+    ctx.restore();
+
+    // Ground
+    ctx.fillStyle = 'rgba(255,255,255,0.07)';
+    ctx.fillRect(0, groundY, W, 6);
+
+    // Moving floor stripes
+    ctx.save();
+    ctx.globalAlpha = 0.14;
+    for (let i=0; i<18; i++) {
+      const x = (i*70 - (state.t*state.speed*2.2)%70);
+      ctx.fillRect(x, groundY+8, 30, 6);
+    }
+    ctx.restore();
+  }
+
+  // ---------- DRAW: PLAYER ----------
+  function drawPlayer() {
+    const px = player.x, py = player.y;
+    const bob = player.onGround ? Math.sin(state.t*0.12)*1.2 : 0;
+
+    // shadow
+    ctx.save();
+    ctx.globalAlpha = 0.25;
+    const shW = player.w + (player.onGround ? 12 : 2);
+    const shH = player.onGround ? 10 : 6;
+    ctx.beginPath();
+    ctx.ellipse(px + player.w/2, groundY + 16, shW, shH, 0, 0, Math.PI*2);
+    ctx.fillStyle = '#000';
+    ctx.fill();
+    ctx.restore();
+
+    // body (stylized runner)
+    ctx.save();
+    if (player.blinkT>0) ctx.globalAlpha = 0.55;
+
+    // torso
+    roundedRect(px, py - player.h + bob, player.w, player.h, 10, 'rgba(34,197,94,0.95)', true);
+    // visor
+    roundedRect(px+6, py - player.h + 12 + bob, player.w-12, 14, 8, 'rgba(15,23,42,0.9)', true);
+    // face dot
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.beginPath();
+    ctx.arc(px + player.w - 11, py - player.h + 19 + bob, 2.5, 0, Math.PI*2);
+    ctx.fill();
+
+    // legs
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    const stride = player.onGround ? Math.sin(state.t*0.35) : 0.2;
+    ctx.beginPath();
+    ctx.moveTo(px+10, py-10);
+    ctx.lineTo(px+10 + stride*10, py+8);
+    ctx.moveTo(px+22, py-10);
+    ctx.lineTo(px+22 - stride*10, py+8);
+    ctx.stroke();
+
+    ctx.restore();
+
+    // dust
+    if (player.dustT>0) {
+      ctx.save();
+      ctx.globalAlpha = 0.25;
+      for (let i=0; i<5; i++) {
+        ctx.beginPath();
+        ctx.arc(px - 2 - i*6, groundY + 18, 4 + i*0.8, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  function roundedRect(x,y,w,h,r, fillStyle, fill=true) {
+    ctx.beginPath();
+    ctx.moveTo(x+r, y);
+    ctx.arcTo(x+w, y, x+w, y+h, r);
+    ctx.arcTo(x+w, y+h, x, y+h, r);
+    ctx.arcTo(x, y+h, x, y, r);
+    ctx.arcTo(x, y, x+w, y, r);
+    if (fill) { ctx.fillStyle = fillStyle; ctx.fill(); }
+  }
+
+  // ---------- DRAW: OBSTACLES (vector sprites) ----------
+  function drawShark(o, oy) {
+    // body
+    roundedRect(o.x, oy - o.h, o.w, o.h, 14, 'rgba(59,130,246,0.85)', true);
+    // fin
+    ctx.save();
+    ctx.fillStyle = 'rgba(191,219,254,0.9)';
+    ctx.beginPath();
+    ctx.moveTo(o.x + o.w*0.55, oy - o.h);
+    ctx.lineTo(o.x + o.w*0.75, oy - o.h - 18);
+    ctx.lineTo(o.x + o.w*0.90, oy - o.h);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    // teeth
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    for (let i=0; i<6; i++) {
+      ctx.beginPath();
+      ctx.moveTo(o.x + 10 + i*7, oy - 8);
+      ctx.lineTo(o.x + 13 + i*7, oy - 2);
+      ctx.lineTo(o.x + 16 + i*7, oy - 8);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+    // eye
+    ctx.fillStyle = 'rgba(15,23,42,0.9)';
+    ctx.beginPath();
+    ctx.arc(o.x + o.w - 16, oy - o.h + 18, 4, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  function drawBomb(o, oy) {
+    // main orb
+    ctx.save();
+    ctx.fillStyle = 'rgba(239,68,68,0.9)';
+    ctx.beginPath();
+    ctx.ellipse(o.x + o.w*0.50, oy - o.h*0.55, o.w*0.46, o.h*0.50, 0, 0, Math.PI*2);
+    ctx.fill();
+    // highlight
+    ctx.globalAlpha = 0.25;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.ellipse(o.x + o.w*0.38, oy - o.h*0.70, o.w*0.12, o.h*0.16, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // fuse base
+    roundedRect(o.x + o.w*0.62, oy - o.h*1.02, o.w*0.22, o.h*0.22, 6, 'rgba(148,163,184,0.9)', true);
+
+    // fuse
+    ctx.strokeStyle = 'rgba(250,204,21,0.9)';
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(o.x + o.w*0.72, oy - o.h*1.02);
+    ctx.quadraticCurveTo(o.x + o.w*0.92, oy - o.h*1.25, o.x + o.w*0.80, oy - o.h*1.40);
+    ctx.stroke();
+
+    // spark
+    const spark = (Math.sin(state.t*0.25 + o.phase) + 1) / 2;
+    ctx.fillStyle = 'rgba(253,186,116,0.95)';
+    ctx.beginPath();
+    ctx.arc(o.x + o.w*0.80, oy - o.h*1.40, 3 + spark*3, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawGator(o, oy) {
+    // body
+    roundedRect(o.x, oy - o.h, o.w, o.h, 14, 'rgba(34,197,94,0.85)', true);
+    // spikes
+    ctx.save();
+    ctx.fillStyle = 'rgba(187,247,208,0.85)';
+    for (let i=0; i<5; i++) {
+      ctx.beginPath();
+      ctx.moveTo(o.x + 10 + i*10, oy - o.h);
+      ctx.lineTo(o.x + 15 + i*10, oy - o.h - 10);
+      ctx.lineTo(o.x + 20 + i*10, oy - o.h);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+    // mouth
+    ctx.save();
+    ctx.fillStyle = 'rgba(15,23,42,0.75)';
+    roundedRect(o.x + 8, oy - 22, o.w - 16, 16, 8, 'rgba(15,23,42,0.75)', true);
+    // teeth
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    for (let i=0; i<6; i++) {
+      ctx.beginPath();
+      ctx.moveTo(o.x + 14 + i*7, oy - 10);
+      ctx.lineTo(o.x + 17 + i*7, oy - 4);
+      ctx.lineTo(o.x + 20 + i*7, oy - 10);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+    // eye
+    ctx.fillStyle = 'rgba(15,23,42,0.9)';
+    ctx.beginPath();
+    ctx.arc(o.x + o.w - 14, oy - o.h + 16, 4, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  function drawObstacle(o) {
+    const bob = Math.sin(state.t*o.bobSpeed + o.phase) * o.bobAmp;
+    const oy = o.y + bob;
+
+    // base aura (ameaçador, curioso)
+    ctx.save();
+    ctx.globalAlpha = 0.22;
+    ctx.beginPath();
+    ctx.ellipse(o.x + o.w/2, laneY + 18, o.w*0.65, 10, 0, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(0,0,0,1)';
+    ctx.fill();
+    ctx.restore();
+
+    // draw kind
+    if (o.kind === 'shark') drawShark(o, oy);
+    else if (o.kind === 'bomb') drawBomb(o, oy);
+    else drawGator(o, oy);
+
+    // label month
+    const m = months[o.monthIndex];
+    ctx.save();
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.globalAlpha = 0.95;
+    ctx.fillText(`${m.key} 2025`, o.x - 4, laneY + 40);
+
+    // tiny marker line
+    ctx.globalAlpha = 0.35;
+    ctx.fillRect(o.x + o.w/2 - 1, laneY + 10, 2, 18);
+    ctx.restore();
+  }
+
+  // ---------- DRAGON FINISH ----------
+  function drawDragon() {
+    // dragon base position
+    const x = state.finishX, y = laneY;
+    const wob = Math.sin(state.t*0.05) * 3;
+    state.dragonWave = (state.dragonWave + 0.03) % (Math.PI*2);
+
+    // shadow
+    ctx.save();
+    ctx.globalAlpha = 0.25;
+    ctx.beginPath();
+    ctx.ellipse(x + 120, laneY + 18, 120, 14, 0, 0, Math.PI*2);
+    ctx.fillStyle = '#000';
+    ctx.fill();
+    ctx.restore();
+
+    // body
+    ctx.save();
+    roundedRect(x + 40, y - 130 + wob, 210, 130, 28, 'rgba(168,85,247,0.85)', true); // purple dragon
+    // belly
+    roundedRect(x + 80, y - 90 + wob, 130, 90, 24, 'rgba(251,191,36,0.65)', true);
+
+    // head
+    roundedRect(x, y - 165 + wob, 120, 100, 26, 'rgba(168,85,247,0.92)', true);
+
+    // horns
+    ctx.fillStyle = 'rgba(226,232,240,0.9)';
+    ctx.beginPath();
+    ctx.moveTo(x + 20, y - 165 + wob);
+    ctx.lineTo(x + 6, y - 192 + wob);
+    ctx.lineTo(x + 40, y - 168 + wob);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x + 78, y - 165 + wob);
+    ctx.lineTo(x + 98, y - 192 + wob);
+    ctx.lineTo(x + 102, y - 165 + wob);
+    ctx.closePath();
+    ctx.fill();
+
+    // eye + smile
+    ctx.fillStyle = 'rgba(15,23,42,0.9)';
+    ctx.beginPath();
+    ctx.arc(x + 82, y - 130 + wob, 8, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(15,23,42,0.7)';
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(x + 62, y - 112 + wob, 24, 0.1*Math.PI, 0.85*Math.PI);
+    ctx.stroke();
+
+    // waving arm (saudando)
+    const armA = Math.sin(state.dragonWave) * 10;
+    ctx.strokeStyle = 'rgba(168,85,247,0.95)';
+    ctx.lineWidth = 14;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x + 200, y - 85 + wob);
+    ctx.lineTo(x + 250, y - 110 + wob + armA);
+    ctx.stroke();
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = 'rgba(226,232,240,0.9)';
+    ctx.beginPath();
+    ctx.moveTo(x + 250, y - 110 + wob + armA);
+    ctx.lineTo(x + 265, y - 105 + wob + armA);
+    ctx.stroke();
+
+    // sign "2026"
+    ctx.save();
+    roundedRect(x + 132, y - 210 + wob, 130, 58, 14, 'rgba(15,23,42,0.88)', true);
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 132, y - 210 + wob, 130, 58);
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.font = '800 28px system-ui, sans-serif';
+    ctx.fillText('2026', x + 170, y - 170 + wob);
+    ctx.restore();
+
+    ctx.restore();
+  }
+
+  // ---------- GAME LOOP ----------
+  function update() {
+    requestAnimationFrame(update);
+    if (!state.started) {
+      renderIdle();
+      return;
+    }
+    if (state.paused) {
+      renderFrame();
+      drawOverlay('PAUSADO', 'Pressione P para retomar');
+      return;
+    }
+    if (state.over) {
+      renderFrame();
+      drawOverlay('FIM DE JOGO', 'Pressione R para reiniciar • E=Fácil • N=Normal • H=Hard');
+      return;
+    }
+    if (state.win) {
+      renderFrame();
+      drawOverlay('VITÓRIA!', '2026 começar tudo no modo HARD! • R recomeça • H/N muda modo');
+      return;
+    }
+
+    // advance time
+    state.t++;
+
+    // physics player
+    player.vy += gravity;
+    player.y += player.vy;
+    if (player.y >= laneY) {
+      player.y = laneY;
+      player.vy = 0;
+      player.onGround = true;
+    }
+    player.blinkT = Math.max(0, player.blinkT - 1);
+    player.dustT = Math.max(0, player.dustT - 1);
+
+    // difficulty ramp per level (each 3 months)
+    const targetLevel = 1 + Math.floor(state.monthIndex / 3);
+    if (targetLevel !== state.level) {
+      state.level = targetLevel;
+      showTip(`NÍVEL ${state.level} — velocidade aumenta`, 130);
+    }
+    state.speed = state.baseSpeed + (state.level-1)*0.85 + Math.min(1.2, state.monthIndex*0.05);
+
+    // move obstacles left
+    for (const o of obstacles) {
+      o.x -= state.speed;
+
+      // update bob aggressiveness slightly with level
+      o.bobAmp = (8 + (o.id%4)*2) + (state.level-1)*1.2;
+
+      // passed obstacle?
+      if (!o.passed && o.x + o.w < player.x) {
+        o.passed = true;
+        state.monthIndex = Math.max(state.monthIndex, o.monthIndex + 1);
+
+        // score for passing
+        state.score += 100 * state.combo;
+        state.combo = clamp(state.combo + 1, 1, 12);
+
+        // month story tip
+        const m = months[o.monthIndex];
+        showTip(`${m.title} 2025: ${m.story}`, 170);
+      }
+
+      // collision box: use a slightly smaller hitbox to keep it fair
+      const hitPad = 6;
+      const bob = Math.sin(state.t*o.bobSpeed + o.phase) * o.bobAmp;
+      const ox = o.x + hitPad;
+      const oy = (o.y + bob) - o.h + hitPad;
+      const ow = o.w - hitPad*2;
+      const oh = o.h - hitPad*2;
+
+      const px = player.x + 4;
+      const py = player.y - player.h + 4;
+      const pw = player.w - 8;
+      const ph = player.h - 8;
+
+      // near miss bonus (if very close but not colliding)
+      const near = aabb(px, py, pw, ph, ox-10, oy-6, ow+20, oh+12) && !aabb(px, py, pw, ph, ox, oy, ow, oh);
+      if (near && !o.nearMissed && state.nearMissCooldown<=0) {
+        o.nearMissed = true;
+        state.nearMissCooldown = 25;
+        state.score += 45 * state.combo;
+        sfxNear();
+        showTip(`Quase! Bônus de coragem (+${45*state.combo})`, 65);
+      }
+
+      if (aabb(px, py, pw, ph, ox, oy, ow, oh)) {
+        // hit
+        state.over = true;
+        state.combo = 1;
+        player.blinkT = 18;
+        sfxHit();
+        state.score = Math.max(0, state.score - 80);
+        if (state.score > state.best) {
+          state.best = Math.floor(state.score);
+          localStorage.setItem('best_corrida_2025', String(state.best));
+        }
+      }
+    }
+
+    state.nearMissCooldown = Math.max(0, state.nearMissCooldown - 1);
+
+    // Move finish line (dragon) relative to world
+    state.finishX -= state.speed;
+
+    // win condition: pass finish
+    if (state.finishX + 260 < player.x) {
+      state.win = true;
+      state.score += 600 * state.combo;
+      if (state.score > state.best) {
+        state.best = Math.floor(state.score);
+        localStorage.setItem('best_corrida_2025', String(state.best));
+      }
+      sfxWin();
+      showTip('Você atravessou 2025 inteiro!', 200);
+    }
+
+    // decay tip
+    if (state.tipTimer > 0) state.tipTimer--;
+    else state.tipText = '';
+
+    // update best
+    if (!state.over && !state.win && state.score > state.best) {
+      state.best = Math.floor(state.score);
+      localStorage.setItem('best_corrida_2025', String(state.best));
+    }
+
+    updateHUD();
+    renderFrame();
+  }
+
+  function renderIdle() {
+    // idle scene
+    ctx.clearRect(0,0,W,H);
+    drawBackground();
+    drawDragonIdleFar();
+    drawPlayer();
+    drawBanner('TOQUE / ESPAÇO PARA COMEÇAR', 'Pule os meses de 2025 e chegue ao dragão 2026');
+    drawMonthTrack();
+    updateHUD();
+  }
+
+  function renderFrame() {
+    ctx.clearRect(0,0,W,H);
+    drawBackground();
+    drawMonthTrack();
+
+    // obstacles
+    for (const o of obstacles) {
+      if (o.x > -200 && o.x < W+200) drawObstacle(o);
+    }
+
+    // finish dragon
+    if (state.finishX < W + 400) drawDragon();
+
+    drawPlayer();
+
+    // tip bubble
+    if (state.tipText && state.tipTimer > 0) {
+      drawTip(state.tipText);
+    }
+  }
+
+  function drawDragonIdleFar() {
+    // show dragon far at right on idle (static)
+    const saveFinish = state.finishX;
+    state.finishX = W - 260;
+    drawDragon();
+    state.finishX = saveFinish;
+  }
+
+  function drawMonthTrack() {
+    // timeline at bottom
+    const baseY = H - 26;
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+
+    // line
+    ctx.strokeStyle = 'rgba(255,255,255,0.20)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(26, baseY);
+    ctx.lineTo(W-26, baseY);
+    ctx.stroke();
+
+    const idx = clamp(state.monthIndex, 0, months.length);
+    const progress = idx / months.length;
+
+    // progress highlight
+    ctx.strokeStyle = 'rgba(34,197,94,0.55)';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(26, baseY);
+    ctx.lineTo(26 + (W-52)*progress, baseY);
+    ctx.stroke();
+
+    // ticks
+    for (let i=0; i<months.length; i++) {
+      const x = 26 + (W-52)*(i/(months.length-1));
+      ctx.globalAlpha = (i <= idx-1) ? 0.95 : 0.45;
+      ctx.fillStyle = (i <= idx-1) ? 'rgba(34,197,94,0.95)' : 'rgba(255,255,255,0.75)';
+      ctx.fillRect(x-1, baseY-10, 2, 20);
+
+      ctx.globalAlpha = 0.8;
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.fillText(months[i].key, x-10, baseY+22);
+    }
+
+    ctx.restore();
+  }
+
+  function drawTip(text) {
+    const pad = 14;
+    ctx.save();
+    ctx.font = '700 14px system-ui, sans-serif';
+    const maxW = Math.min(W-40, 760);
+    // wrap
+    const lines = wrapText(ctx, text, maxW - pad*2);
+    const h = pad*2 + lines.length*18;
+    const x = Math.floor(W/2 - maxW/2);
+    const y = 18;
+
+    // bubble
+    roundedRect(x, y, maxW, h, 14, 'rgba(15,23,42,0.80)', true);
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, maxW, h);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    let yy = y + pad + 14;
+    for (const line of lines) {
+      ctx.fillText(line, x + pad, yy);
+      yy += 18;
+    }
+    ctx.restore();
+  }
+
+  function drawOverlay(title, subtitle) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.50)';
+    ctx.fillRect(0,0,W,H);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.font = '900 44px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(title, W/2, H/2 - 20);
+
+    ctx.font = '600 16px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fillText(subtitle, W/2, H/2 + 18);
+    ctx.restore();
+  }
+
+  function drawBanner(title, subtitle) {
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.font = '900 34px system-ui, sans-serif';
+    ctx.fillText(title, W/2, 190);
+    ctx.font = '600 14px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.80)';
+    ctx.fillText(subtitle, W/2, 220);
+    ctx.restore();
+  }
+
+  function wrapText(ctx, text, maxWidth) {
+    const words = text.split(' ');
+    const lines = [];
+    let line = '';
+    for (const w of words) {
+      const test = line ? line + ' ' + w : w;
+      if (ctx.measureText(test).width <= maxWidth) line = test;
+      else { lines.push(line); line = w; }
+    }
+    if (line) lines.push(line);
+    return lines;
+  }
+
+  // ---------- START ----------
+  updateHUD();
+  const _btnModeInit = document.getElementById('btnMode');
+  if (_btnModeInit) _btnModeInit.textContent = `Modo: ${mode === 'EASY' ? 'Fácil' : (mode === 'NORMAL' ? 'Normal' : 'Hard')}`;
+  renderIdle();
+  update(); // starts RAF loop
+
+})();
+</script>
+</body>
+</html>
